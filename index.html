@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#03050b" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <meta
+      name="description"
+      content="A cinematic FPV drone flight over a small Indian mohalla on Diwali night."
+    />
+    <title>Diwali Night — A Mohalla Flight</title>
+  </head>
+  <body>
+    <main id="app">
+      <div id="viewport" aria-label="Diwali night drone flight simulation"></div>
+      <div class="lens-treatment" aria-hidden="true"></div>
+      <div id="ui"></div>
+
+      <div id="loading" class="loading-screen">
+        <div class="loading-flame" aria-hidden="true"><span></span></div>
+        <p class="eyebrow">Mohalla flight · Diwali night</p>
+        <p class="loading-copy">Lighting the diyas</p>
+        <div class="loading-track" aria-hidden="true"><span></span></div>
+      </div>
+    </main>
+
+    <noscript>
+      <div class="fatal">
+        <p>This experience needs JavaScript and WebGL 2.</p>
+      </div>
+    </noscript>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

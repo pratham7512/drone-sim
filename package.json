@@ -1,0 +1,23 @@
+{
+  "name": "diwali-night-drone",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A cinematic FPV drone flight over a small Indian mohalla on Diwali night.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "0.21.0",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.187.0",
+    "playwright": "1.65.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.7"
+  }
+}
