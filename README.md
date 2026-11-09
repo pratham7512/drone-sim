@@ -2,7 +2,7 @@
 
 A cinematic, browser-based FPV drone flight over a small Indian mohalla on Diwali night. Built with TypeScript, Vite, Three.js, Rapier and the Web Audio API.
 
-**Milestone 1 is complete.** The experience boots into a dark, hand-built terrace above a placeholder mohalla skyline. You can fly a quadrotor in first person, hold altitude with hover assist, and inspect live render telemetry.
+**Milestone 1 is complete, including the realism pass.** The experience boots into a terrace above a live, endless mohalla. You fly a quadrotor in first person with camera-mounted front props, depth of field, lens droplets, film grain and a fully synthesised motor/wind soundtrack. The surrounding city repeats on a 512 m period and streams colliders around the camera, so there is no hard flight boundary.
 
 ## Quick start
 
@@ -11,6 +11,12 @@ Requires Node.js 20+ and a browser with WebGL 2.
 ```bash
 npm install
 npm run dev          # http://localhost:5173
+```
+
+If port 5173 is already taken:
+
+```bash
+npm run dev -- --port 5199 --host 127.0.0.1   # http://127.0.0.1:5199
 ```
 
 Production build and local preview:
@@ -29,65 +35,73 @@ npm run preview      # http://localhost:4173
 | `Q` / `E` | Yaw left / right |
 | `Space` / `Shift` | Climb / sink (hold `Ctrl` to sink as well) |
 | `H` | Toggle hover assist |
+| `M` | Mute / unmute the synthesised audio |
 | `R` | Reset to the terrace |
 | `` ` `` | Toggle render diagnostics |
 
-The HUD shows heading, altitude, ground speed and hover-assist state. The greeting card dismisses on the first flight input or after ten seconds.
+The HUD shows heading, altitude, ground speed and hover-assist state. The greeting card dismisses on the first flight input or after ten seconds. Audio starts after the first click or key press because browsers require a user gesture.
 
-## Milestone 1 scope
+## What is in this build
 
 - Vite + TypeScript boot with WebGL 2 explicitly requested and a readable fatal-error screen.
 - Rapier WASM physics world at a fixed 60 Hz step, decoupled from render cadence.
 - One authored terrace: parapets, mumty, water tank, AC unit, plants, warm window, akash kandil, string lights, diyas and a procedural rangoli.
-- A non-collidable placeholder skyline with instanced building masses, lit window grids and rooftop clutter.
-- Yaw-locked dynamic drone body with velocity-driven horizontal flight, visual banking, gravity feed-forward and a PD altitude hold.
-- Nose-mounted FPV camera with subtle vibration, collision shake, speed FOV and a gentle bank.
-- Sparse HUD, loading screen, procedural textures and diagnostic overlay.
+- Infinite, shader-wrapped mohalla: 325 instanced buildings, lit window grids, rooftop tanks, mumties, antennas, festival bulbs and street-lamp glow. The layout repeats every 512 m and the nearest buildings stream into Rapier as the drone moves.
+- Yaw-locked dynamic drone body with velocity-driven horizontal flight, visual banking, gravity feed-forward and a PD altitude hold. Horizontal speed tops out at 18.5 m/s.
+- Nose-mounted FPV camera with vibration, collision shake, speed FOV, bank and two camera-attached front propellers that stay sharp while the city falls into bokeh.
+- HDR post-processing: depth of field focused on the front props, bloom, screen-space lens droplets with refraction/specular, radial speed smear, chromatic fringing, vignette, grain and ACES tone mapping.
+- CC0 photo-scanned plaster and concrete textures on the terrace, with runtime procedural fallbacks.
+- Synthesised FPV sound: three detuned motor voices, prop-wash noise, wind and a motor whine that follow speed and lift. No recorded or copyrighted audio.
+- Sparse HUD, loading screen, diagnostic overlay and a Playwright smoke test.
+
+## Performance
 
 Measured on the smoke run at 1440 × 900 in headless Chrome with the Metal ANGLE backend:
 
 | Metric | Value | Budget |
 | --- | --- | --- |
 | Frame rate | ~60 fps | 60 fps mid-range laptop |
-| Draw calls | 67 | < 120 |
-| Triangles | 19,458 | < 150,000 |
-| Points | 845 | — |
-| Textures | 9 | < 128 MB |
-| Initial JS | 4.95 MB (1.81 MB gzip) | < 15 MB excluding audio |
+| Draw calls | 96 | < 120 |
+| Triangles | 50,120 | < 150,000 |
+| Points | 1,034 | — |
+| Textures | 38 | < 128 MB |
+| Initial JS | 5.06 MB (1.84 MB gzip) | < 15 MB excluding audio |
+| Photo textures | ~3.6 MiB on disk | included in the initial load |
 
-These numbers will move as the mohalla, effects and post-processing are added. The debug overlay is the source of truth during development.
+The debug overlay is the source of truth during development. The city is drawn through a GPU wrap in the vertex shader, so extending the flight does not grow the draw-call count.
 
 ## Architecture
 
 ```
 src/
-  engine/       renderer, fixed-step loop, Rapier wrapper, stats, math
-  drone/        input, flight model, drone mesh, FPV camera
-  world/        scene assembly, terrace, skyline, sky, procedural textures
+  engine/       renderer, post composer ownership, fixed-step loop, Rapier wrapper, stats, math
+  drone/        input, flight model, drone mesh, FPV camera, camera-mounted front props
+  world/        scene assembly, terrace, infinite mohalla, sky, photo/procedural textures
   ui/           HUD, greeting and diagnostics
-  audio/        reserved for the audio manifest and Web Audio graph
-  fx/           reserved for fireworks, particles and post-processing
+  audio/        synthesised Web Audio graph
+  fx/           post-processing composer and custom lens effect
   tools/        reserved for layout import and asset conversion tools
 ```
 
-- `Game` owns the orchestration and the fixed-update/render split.
+- `Game` owns orchestration, photo loading, the fixed-update/render split and debug state.
 - `DronePhysics` is the simulation authority. Rapier keeps the body upright; the controller drives horizontal velocity and vertical hold, while the visible airframe tilt is presentation-only.
-- `World` owns static collision and atmosphere. The starting terrace has real colliders; the milestone-one skyline is deliberately non-collidable scenery.
-- `Backdrop` batches its buildings, windows and rooftop props into instanced draws. Window halos and festive lights share custom point-sprite shaders so bloom-like warmth does not require post-processing yet.
-- All textures are generated procedurally at runtime. The material interfaces are ready for a KTX2 photo atlas with PNG/JPG fallback.
+- `World` owns static collision and atmosphere. The terrace and streamed city buildings have real colliders; the ground collider follows the camera.
+- `Backdrop` GPU-wraps every city instance to the copy nearest the camera. Buildings, windows, rooftop props and lights are each batched into instanced draws.
+- `FpvPost` owns the HalfFloat composer. Depth of field runs first, then bloom, then a custom glass/lens effect and ACES tone mapping. The renderer itself uses `NoToneMapping`.
+- `FpvRig` attaches two shader-driven three-blade props to the camera. They are near the focus plane, so they stay crisp while the city softens.
+- `DroneAudio` builds its graph lazily after a gesture, then modulates pitch, filter cutoff and prop-wash level from speed and lift.
+- Photo texture loads are optional: `loadPhotoTextures` falls back to the procedural wall and roof sets if the files are unavailable.
 
 ## Asset policy
 
-- No Google Street View, scraped imagery or third-party copyrighted audio.
-- Current photoreal cues are procedural placeholders.
-- Future photo atlases will be built from original photography, shipped as KTX2 where supported with PNG/JPG fallbacks.
-- Audio will use an explicit manifest and will not embed copyrighted recordings.
-
-See [`public/textures/photos/README.md`](public/textures/photos/README.md) and [`public/audio/README.md`](public/audio/README.md).
+- No Google Street View, map tiles, scraped imagery or third-party copyrighted audio.
+- The two surface scans are CC0 from [Poly Haven](https://polyhaven.com/): `painted_plaster_wall` by Amal Kumar and `concrete_floor_worn_02` by Dimitrios Savva. Attribution and source links are recorded in [`public/textures/photos/README.md`](public/textures/photos/README.md).
+- All sound is generated at runtime with the Web Audio API. There are no audio files.
+- Procedural wall, roof, wood, glow and rangoli textures remain available as fallbacks.
 
 ## Testing
 
-The smoke test boots the app, verifies WebGL 2, climbs, flies forward, toggles diagnostics and hover assist, takes screenshots and fails on console errors or budget overruns.
+The smoke test boots the app, verifies WebGL 2, climbs, flies forward, toggles diagnostics and hover assist, mutes and unmutes audio, takes screenshots and fails on console errors, warnings, failed requests or budget overruns.
 
 ```bash
 # with the dev server running on a known port
@@ -101,20 +115,21 @@ SMOKE_URL=http://127.0.0.1:4199/ npm run smoke
 
 It uses the locally installed Google Chrome at `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Override with `CHROME_PATH` if needed. Screenshots are written to `screenshots/` (ignored by git).
 
-`window.__DIWALI_GAME__.getDebugState()` exposes readiness, position, speed, frame rate, draw calls, triangles, points and the active WebGL version for automation.
+`window.__DIWALI_GAME__.getDebugState()` exposes readiness, position, speed, frame rate, draw calls, triangles, points, WebGL version, audio state, city building/collider counts, city period and feature flags for automation.
 
 ## Next systems
 
-- Layout JSON and an OSM-derived mohalla massing, replacing the placeholder skyline with collidable lanes and rooftops.
-- Original photo texture atlas with KTX2 + PNG/JPG fallback, shared materials and quality presets.
-- Audio manifest, ambience beds, spatial firecracker bursts and a mute/volume setting.
-- All firework shell types, light flashes, smoke and pooled particle effects.
-- Altitude-blur/post-processing pass, landing pads and landing state machine.
-- Help screen, input remapping, quality selector and expanded diagnostics.
+- Layout JSON and an OSM-derived mohalla massing with more varied architecture, balconies, shopfronts and lanes.
+- KTX2/Basis compression for the photo textures with PNG/JPG fallback, plus material quality presets.
+- Fireworks: all shell types, light flashes, smoke and pooled particle effects.
+- Landing pads, landing state machine and a proper help screen.
+- Touch and gamepad controls, input remapping and a quality selector.
 
 ## Known limitations
 
-- Only the starting building is solid. The surrounding skyline is a painted backdrop.
+- Buildings are primitive masses dressed with window planes and rooftop props; close inspection still reveals the low-poly construction.
+- Colliders stream within roughly 115 m of the camera. Flight beyond that is still possible, but distant buildings are scenery until the stream catches up.
+- The infinite city repeats every 512 m. Fog and night lighting hide the seam, but the pattern is deliberately periodic.
+- Lens droplets are a screen-space effect, not physical fluid on a lens mesh.
 - Keyboard flight only; touch and gamepad controls are not wired up yet.
-- No audio, fireworks, post-processing, landing state machine or quality selector in milestone one.
-- The greeting card is decorative and dismisses automatically; the full help screen comes later.
+- No fireworks, landing state machine or quality selector yet.

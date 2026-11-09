@@ -5,13 +5,20 @@ export interface FlightCommand {
   strafe: number;
   /** -1 descend, +1 climb. */
   lift: number;
+  /** Held while the pilot wants a powered, slow descent. */
+  descend: boolean;
   /** -1 yaw right, +1 yaw left. */
   yaw: number;
   /** True whenever a flight input is held. */
   active: boolean;
 }
 
-export type InputAction = 'toggle-hover' | 'toggle-debug' | 'reset';
+export type InputAction =
+  | 'toggle-hover'
+  | 'toggle-mode'
+  | 'toggle-debug'
+  | 'toggle-mute'
+  | 'reset';
 
 const FLIGHT_KEYS = new Set([
   'KeyW',
@@ -47,9 +54,12 @@ export class InputController {
     return {
       forward: Number(this.isHeld('KeyW')) - Number(this.isHeld('KeyS')),
       strafe: Number(this.isHeld('KeyD')) - Number(this.isHeld('KeyA')),
-      lift:
-        Number(this.isHeld('Space')) -
-        Number(this.isHeld('ShiftLeft') || this.isHeld('ShiftRight') || this.isHeld('ControlLeft') || this.isHeld('ControlRight')),
+      lift: Number(this.isHeld('Space')),
+      descend:
+        this.isHeld('ShiftLeft') ||
+        this.isHeld('ShiftRight') ||
+        this.isHeld('ControlLeft') ||
+        this.isHeld('ControlRight'),
       yaw: Number(this.isHeld('KeyQ')) - Number(this.isHeld('KeyE')),
       active: [...FLIGHT_KEYS].some((code) => this.held.has(code)),
     };
@@ -96,7 +106,9 @@ export class InputController {
 
       let action: InputAction | null = null;
       if (event.code === 'KeyH') action = 'toggle-hover';
+      else if (event.code === 'KeyT') action = 'toggle-mode';
       else if (event.code === 'Backquote') action = 'toggle-debug';
+      else if (event.code === 'KeyM') action = 'toggle-mute';
       else if (event.code === 'KeyR') action = 'reset';
 
       if (action) {

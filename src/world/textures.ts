@@ -7,7 +7,23 @@ export interface ProceduralTextures {
   wood: THREE.CanvasTexture;
   glow: THREE.CanvasTexture;
   rangoli: THREE.CanvasTexture;
+  ground: THREE.CanvasTexture;
+  asphalt: THREE.CanvasTexture;
+  pavers: THREE.CanvasTexture;
 }
+
+export interface SurfaceTextureSet {
+  map: THREE.Texture;
+  normalMap: THREE.Texture;
+  roughnessMap: THREE.Texture;
+}
+
+export interface PhotoTextures {
+  wall: SurfaceTextureSet;
+  roof: SurfaceTextureSet;
+}
+
+const PHOTO_TEXTURE_ROOT = `${import.meta.env.BASE_URL}textures/photos/`;
 
 /**
  * Procedural stand-ins for the eventual photo atlas. They deliberately include
@@ -22,7 +38,63 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     wood: createWoodTexture(maxAnisotropy),
     glow: createGlowTexture(),
     rangoli: createRangoliTexture(maxAnisotropy),
+    ground: createGroundTexture(maxAnisotropy),
+    asphalt: createAsphaltTexture(maxAnisotropy),
+    pavers: createPaverTexture(maxAnisotropy),
   };
+}
+
+/**
+ * Loads the original CC0 surface scans used for the terrace. The loader is
+ * deliberately best-effort: if any file is missing, the procedural set stays
+ * active and the flight still boots. A KTX2 transcoder will slot in here later
+ * with the same fallback contract.
+ */
+export async function loadPhotoTextures(maxAnisotropy: number): Promise<PhotoTextures | null> {
+  try {
+    const [wall, roof] = await Promise.all([
+      loadSurfaceTextureSet('painted_plaster_wall', maxAnisotropy),
+      loadSurfaceTextureSet('concrete_floor_worn_02', maxAnisotropy),
+    ]);
+    return { wall, roof };
+  } catch {
+    return null;
+  }
+}
+
+async function loadSurfaceTextureSet(
+  folder: string,
+  maxAnisotropy: number,
+): Promise<SurfaceTextureSet> {
+  const loader = new THREE.TextureLoader();
+  const root = `${PHOTO_TEXTURE_ROOT}${folder}/`;
+  const [map, normalMap, roughnessMap] = await Promise.all([
+    loader.loadAsync(`${root}diffuse.jpg`),
+    loader.loadAsync(`${root}normal.jpg`),
+    loader.loadAsync(`${root}roughness.jpg`),
+  ]);
+
+  map.colorSpace = THREE.SRGBColorSpace;
+  normalMap.colorSpace = THREE.NoColorSpace;
+  roughnessMap.colorSpace = THREE.NoColorSpace;
+
+  for (const texture of [map, normalMap, roughnessMap]) {
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.anisotropy = Math.max(1, Math.min(8, maxAnisotropy));
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = true;
+    texture.needsUpdate = true;
+  }
+
+  return { map, normalMap, roughnessMap };
+}
+
+export function disposeSurfaceTextureSet(set: SurfaceTextureSet): void {
+  set.map.dispose();
+  set.normalMap.dispose();
+  set.roughnessMap.dispose();
 }
 
 function createCanvas(size: number): { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D } {
@@ -372,6 +444,190 @@ function createRangoliTexture(anisotropy: number): THREE.CanvasTexture {
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = true;
   return texture;
+}
+
+/** Packed earth, broken paving and grit: the mohalla floor between buildings. */
+function createGroundTexture(anisotropy: number): THREE.CanvasTexture {
+  const random = new Random(0x51ee7a);
+  const { canvas, context } = createCanvas(512);
+
+  context.fillStyle = '#4a453b';
+  context.fillRect(0, 0, 512, 512);
+
+  // Broad damp patches, swept dust and repaired earth.
+  for (let i = 0; i < 54; i += 1) {
+    const x = random.range(0, 512);
+    const y = random.range(0, 512);
+    const radius = random.range(20, 150);
+    const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+    const light = random.next() > 0.48;
+    gradient.addColorStop(
+      0,
+      light ? 'rgba(126, 116, 96, 0.18)' : 'rgba(24, 23, 20, 0.2)',
+    );
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    context.fillStyle = gradient;
+    context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  // Broken concrete slabs and packed-earth repairs.
+  for (let i = 0; i < 16; i += 1) {
+    const cx = random.range(0, 512);
+    const cy = random.range(0, 512);
+    const radius = random.range(18, 55);
+    const sides = random.int(5, 8);
+    context.beginPath();
+    for (let side = 0; side < sides; side += 1) {
+      const angle = (side / sides) * Math.PI * 2 + random.range(-0.2, 0.2);
+      const r = radius * random.range(0.55, 1);
+      const px = cx + Math.cos(angle) * r;
+      const py = cy + Math.sin(angle) * r * 0.7;
+      if (side === 0) context.moveTo(px, py);
+      else context.lineTo(px, py);
+    }
+    context.closePath();
+    context.fillStyle = random.next() > 0.45
+      ? 'rgba(115, 107, 94, 0.15)'
+      : 'rgba(77, 70, 58, 0.22)';
+    context.fill();
+    context.strokeStyle = 'rgba(28, 26, 22, 0.28)';
+    context.lineWidth = 1.4;
+    context.stroke();
+  }
+
+  // Grit, gravel and dry leaf litter.
+  for (let i = 0; i < 3800; i += 1) {
+    const x = random.range(0, 512);
+    const y = random.range(0, 512);
+    const size = random.range(0.5, 2.4);
+    context.fillStyle = random.next() > 0.5
+      ? `rgba(146, 127, 99, ${random.range(0.08, 0.3)})`
+      : `rgba(18, 17, 15, ${random.range(0.12, 0.38)})`;
+    context.fillRect(x, y, size, size * random.range(0.7, 1.8));
+  }
+
+  // Wheel-rut wear.
+  for (const offset of [-74, 74]) {
+    const gradient = context.createLinearGradient(0, 220 + offset, 0, 330 + offset);
+    gradient.addColorStop(0, 'rgba(20, 19, 17, 0)');
+    gradient.addColorStop(0.5, 'rgba(20, 19, 17, 0.16)');
+    gradient.addColorStop(1, 'rgba(20, 19, 17, 0)');
+    context.fillStyle = gradient;
+    context.fillRect(0, 220 + offset, 512, 110);
+  }
+
+  drawCracks(context, random, 11, 0.22);
+  return makeTexture(canvas, anisotropy, 1, 1);
+}
+
+/** Damp asphalt with aggregate, patched seams and hairline cracks. */
+function createAsphaltTexture(anisotropy: number): THREE.CanvasTexture {
+  const random = new Random(0xa59a17);
+  const { canvas, context } = createCanvas(512);
+
+  context.fillStyle = '#26282b';
+  context.fillRect(0, 0, 512, 512);
+
+  for (let i = 0; i < 38; i += 1) {
+    const x = random.range(0, 512);
+    const y = random.range(0, 512);
+    const radius = random.range(18, 120);
+    const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+    const light = random.next() > 0.5;
+    gradient.addColorStop(
+      0,
+      light ? 'rgba(104, 104, 100, 0.1)' : 'rgba(8, 9, 11, 0.16)',
+    );
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    context.fillStyle = gradient;
+    context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  // Coarse aggregate.
+  for (let i = 0; i < 6800; i += 1) {
+    const x = random.range(0, 512);
+    const y = random.range(0, 512);
+    const size = random.range(0.4, 1.9);
+    context.fillStyle = random.next() > 0.58
+      ? `rgba(132, 132, 124, ${random.range(0.05, 0.2)})`
+      : `rgba(8, 9, 10, ${random.range(0.1, 0.3)})`;
+    context.fillRect(x, y, size, size);
+  }
+
+  // Tar-sealed repair seams.
+  context.lineWidth = 2.4;
+  for (let i = 0; i < 5; i += 1) {
+    context.strokeStyle = `rgba(11, 12, 13, ${random.range(0.24, 0.5)})`;
+    context.beginPath();
+    let x = random.range(0, 512);
+    let y = random.range(0, 512);
+    context.moveTo(x, y);
+    for (let segment = 0; segment < 4; segment += 1) {
+      x += random.range(-90, 90);
+      y += random.range(-40, 40);
+      context.lineTo(x, y);
+    }
+    context.stroke();
+  }
+
+  drawCracks(context, random, 9, 0.34);
+  return makeTexture(canvas, anisotropy, 1, 1);
+}
+
+/** Worn concrete pavers for the raised footpaths along the arterials. */
+function createPaverTexture(anisotropy: number): THREE.CanvasTexture {
+  const random = new Random(0x9a71e);
+  const { canvas, context } = createCanvas(512);
+  const tile = 64;
+
+  context.fillStyle = '#4f4a42';
+  context.fillRect(0, 0, 512, 512);
+
+  for (let row = 0; row < 512 / tile; row += 1) {
+    for (let column = 0; column < 512 / tile; column += 1) {
+      const shade = random.range(0.74, 1.08);
+      const warm = random.range(-6, 10);
+      const base = Math.round(84 * shade);
+      context.fillStyle = `rgb(${base + warm}, ${base}, ${base - 7})`;
+      context.fillRect(
+        column * tile + 2,
+        row * tile + 2,
+        tile - 4,
+        tile - 4,
+      );
+
+      context.strokeStyle = 'rgba(18, 17, 15, 0.5)';
+      context.lineWidth = 1.5;
+      context.strokeRect(
+        column * tile + 1,
+        row * tile + 1,
+        tile - 2,
+        tile - 2,
+      );
+    }
+  }
+
+  for (let i = 0; i < 2200; i += 1) {
+    const x = random.range(0, 512);
+    const y = random.range(0, 512);
+    context.fillStyle = random.next() > 0.5
+      ? `rgba(160, 148, 128, ${random.range(0.05, 0.16)})`
+      : `rgba(20, 18, 16, ${random.range(0.06, 0.22)})`;
+    context.fillRect(x, y, random.range(0.6, 2), random.range(0.6, 2));
+  }
+
+  for (let i = 0; i < 9; i += 1) {
+    const x = random.range(0, 512);
+    const y = random.range(0, 512);
+    const radius = random.range(30, 95);
+    const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+    gradient.addColorStop(0, 'rgba(22, 21, 18, 0.22)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    context.fillStyle = gradient;
+    context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  return makeTexture(canvas, anisotropy, 1, 1);
 }
 
 /** Soft radial mask used as an additive stand-in for bloom on tiny lights. */

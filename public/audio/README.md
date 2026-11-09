@@ -1,11 +1,14 @@
-# Audio placeholders
+# Synthesised audio only
 
-Milestone 1 ships without audio assets.
+This folder intentionally contains no audio files.
 
-The Web Audio milestone will add:
+The drone soundtrack is generated live with the Web Audio API in `src/audio/DroneAudio.ts`:
 
-- an `audio-manifest.json` that maps logical cues (`ambience.mohalla`, `shell.whistle`, `drone.motors`, …) to URLs, loop points, gain and spatialisation settings;
-- original or permissively licensed recordings only — never scraped or copyrighted tracks;
-- graceful handling of autoplay restrictions and a mute/volume control.
+- three detuned oscillator voices through a low-pass filter for the motors;
+- band-limited noise for prop wash and wind;
+- a sine whine tied to motor RPM;
+- a compressor and master gain for level control.
 
-Until then this folder stays empty so the future manifest has a stable public path.
+Pitch, filter cutoff, prop-wash level and wind level follow commanded lift and actual ground speed. A tiny pulse adds roughness without masking conversation. Audio starts only after a user gesture, respects autoplay restrictions and can be muted with `M`.
+
+Future firework and ambience layers must follow the same policy: original synthesis or clearly licensed recordings with a manifest and attribution. Never add scraped or copyrighted audio.

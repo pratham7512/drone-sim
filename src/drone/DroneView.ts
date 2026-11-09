@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, damp } from '../engine/math';
 import type { PhysicsWorld } from '../engine/PhysicsWorld';
-import type { DronePhysics } from './DronePhysics';
+import { MAX_HORIZONTAL_SPEED, type DronePhysics } from './DronePhysics';
 
 interface Rotor {
   blades: THREE.Group;
@@ -20,9 +20,8 @@ export class DroneView {
   private readonly shadowMaterial: THREE.MeshBasicMaterial;
   private readonly carbon: THREE.MeshStandardMaterial;
   private readonly accentMaterial: THREE.MeshStandardMaterial;
-  private leanPitch = 0;
-  private leanRoll = 0;
   private rotorAngle = 0;
+  private rotorRate = 0;
 
   constructor(
     scene: THREE.Scene,
@@ -94,16 +93,10 @@ export class DroneView {
   update(deltaSeconds: number, timeSeconds: number): void {
     this.syncTransform();
 
-    const targetPitch = -clamp(this.drone.forwardSpeed / 8.2, -1, 1) * 0.135;
-    const targetRoll = -clamp(this.drone.sideSpeed / 8.2, -1, 1) * 0.17;
-    this.leanPitch = damp(this.leanPitch, targetPitch, 5.5, deltaSeconds);
-    this.leanRoll = damp(this.leanRoll, targetRoll, 5.5, deltaSeconds);
-
-    this.model.rotation.order = 'YXZ';
-    this.model.rotation.set(this.leanPitch, this.drone.yaw, this.leanRoll);
-
-    const rotorTarget = 24 + this.drone.speed * 8 + (this.drone.hoverAssist ? 4 : 9);
-    this.rotorAngle += rotorTarget * deltaSeconds;
+    const speedRatio = clamp(this.drone.speed / MAX_HORIZONTAL_SPEED, 0, 1);
+    const idleRate = this.drone.isCrashed ? 4 : 22 + this.drone.throttleLevel * 92 + speedRatio * 18;
+    this.rotorRate = damp(this.rotorRate, idleRate, 8, deltaSeconds);
+    this.rotorAngle += this.rotorRate * deltaSeconds;
     for (const rotor of this.rotors) {
       rotor.blades.rotation.y = this.rotorAngle * rotor.direction;
     }
@@ -134,7 +127,9 @@ export class DroneView {
 
   private syncTransform(): void {
     const position = this.drone.body.translation();
+    const rotation = this.drone.body.rotation();
     this.model.position.set(position.x, position.y, position.z);
+    this.model.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
   }
 
   private buildHull(matte: THREE.MeshStandardMaterial): void {

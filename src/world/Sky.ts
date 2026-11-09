@@ -110,7 +110,8 @@ export class Sky {
     this.group.add(this.starsMaterial.userData.points as THREE.Points);
   }
 
-  update(deltaSeconds: number): void {
+  update(deltaSeconds: number, cameraPosition?: THREE.Vector3): void {
+    if (cameraPosition) this.group.position.copy(cameraPosition);
     this.elapsed += deltaSeconds;
     this.skyMaterial.uniforms.uTime!.value = this.elapsed;
     this.starsMaterial.uniforms.uTime!.value = this.elapsed;

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Random } from '../engine/math';
 import type { PhysicsWorld } from '../engine/PhysicsWorld';
-import type { ProceduralTextures } from './textures';
+import type { PhotoTextures, ProceduralTextures } from './textures';
 
 interface GlowSource {
   position: THREE.Vector3;
@@ -19,6 +19,9 @@ const PARAPET_THICKNESS = 0.24;
 const RANGOLI_X = 0.75;
 const RANGOLI_Z = -1.25;
 const RANGOLI_RADIUS = 1.5;
+const PAD_X = 1.15;
+const PAD_Z = 3.4;
+const PAD_RADIUS = 1.7;
 
 /**
  * The single starting terrace for milestone one. Its dimensions are deliberately
@@ -27,7 +30,9 @@ const RANGOLI_RADIUS = 1.5;
  */
 export class Terrace {
   readonly group = new THREE.Group();
-  readonly spawnPoint = new THREE.Vector3(1.15, ROOF_HEIGHT + 0.9, 3.4);
+  readonly spawnPoint = new THREE.Vector3(PAD_X, ROOF_HEIGHT + 0.14, PAD_Z);
+  readonly padCenter = new THREE.Vector3(PAD_X, ROOF_HEIGHT + 0.02, PAD_Z);
+  readonly padRadius = PAD_RADIUS;
   /** Slight left turn keeps the lantern and nearest diyas in the opening frame. */
   readonly spawnHeading = 0.07;
 
@@ -38,33 +43,55 @@ export class Terrace {
   private readonly glowMaterial: THREE.ShaderMaterial;
   private readonly materials: THREE.Material[] = [];
   private readonly geometries: THREE.BufferGeometry[] = [];
+  private readonly clonedTextures: THREE.Texture[] = [];
   private readonly lanternBaseY: number;
+  private padRingMaterial!: THREE.MeshBasicMaterial;
+  private padGlowMaterial!: THREE.MeshBasicMaterial;
+  private readonly padLightPositions: THREE.Vector3[] = [];
 
   constructor(
     scene: THREE.Scene,
     physics: PhysicsWorld,
     textures: ProceduralTextures,
     maxAnisotropy: number,
+    photos: PhotoTextures | null = null,
   ) {
     this.group.name = 'starting-terrace';
 
+    this.preparePhotoRepeat(photos);
+    // Three warns when an optional map is present but undefined, so only add
+    // the procedural bump and photo aux maps when they actually exist.
+    const wallParams: THREE.MeshStandardMaterialParameters = {
+      map: photos?.wall.map ?? textures.wall,
+      normalScale: new THREE.Vector2(0.72, 0.72),
+      roughness: photos ? 1 : 0.94,
+      metalness: 0.01,
+    };
+    if (photos) {
+      wallParams.normalMap = photos.wall.normalMap;
+      wallParams.roughnessMap = photos.wall.roughnessMap;
+    } else {
+      wallParams.bumpMap = this.cloneLinear(textures.wall);
+      wallParams.bumpScale = 0.035;
+    }
     const wallMaterial = this.trackMaterial(
-      new THREE.MeshStandardMaterial({
-        map: textures.wall,
-        bumpMap: cloneAsLinear(textures.wall),
-        bumpScale: 0.035,
-        roughness: 0.94,
-        metalness: 0.01,
-      }),
+      new THREE.MeshStandardMaterial(wallParams),
     );
+    const roofParams: THREE.MeshStandardMaterialParameters = {
+      map: photos?.roof.map ?? textures.roof,
+      normalScale: new THREE.Vector2(0.65, 0.65),
+      roughness: photos ? 1 : 0.98,
+      metalness: 0,
+    };
+    if (photos) {
+      roofParams.normalMap = photos.roof.normalMap;
+      roofParams.roughnessMap = photos.roof.roughnessMap;
+    } else {
+      roofParams.bumpMap = this.cloneLinear(textures.roof);
+      roofParams.bumpScale = 0.024;
+    }
     const roofMaterial = this.trackMaterial(
-      new THREE.MeshStandardMaterial({
-        map: textures.roof,
-        bumpMap: cloneAsLinear(textures.roof),
-        bumpScale: 0.024,
-        roughness: 0.98,
-        metalness: 0,
-      }),
+      new THREE.MeshStandardMaterial(roofParams),
     );
     const concreteMaterial = this.trackMaterial(
       new THREE.MeshStandardMaterial({ color: 0x4c4a46, roughness: 0.94 }),
@@ -107,6 +134,7 @@ export class Terrace {
     );
     this.buildWindowGlow();
     this.buildRangoli(textures.rangoli);
+    this.buildLandingPad();
 
     // Collision: one block for the building mass + individual parapet and
     // rooftop solids. The terrace floor top is exactly ROOF_HEIGHT.
@@ -175,6 +203,10 @@ export class Terrace {
       Math.sin(elapsedSeconds * 15.1 + 2.2) * 0.035;
     this.diyaLight.intensity = 5.2 * diyaFlicker;
     this.glowMaterial.uniforms.uTime!.value = elapsedSeconds;
+
+    const padPulse = 0.72 + Math.sin(elapsedSeconds * 2.1) * 0.18;
+    this.padRingMaterial.opacity = padPulse;
+    this.padGlowMaterial.opacity = 0.12 + padPulse * 0.1;
   }
 
   dispose(): void {
@@ -193,6 +225,7 @@ export class Terrace {
     });
     for (const material of this.materials) material.dispose();
     for (const geometry of this.geometries) geometry.dispose();
+    for (const texture of this.clonedTextures) texture.dispose();
   }
 
   private buildBuilding(
@@ -507,6 +540,129 @@ export class Terrace {
     this.group.add(rangoli);
   }
 
+  private buildLandingPad(): void {
+    const baseGeometry = new THREE.CircleGeometry(PAD_RADIUS + 0.06, 64);
+    this.geometries.push(baseGeometry);
+    const baseMaterial = this.trackMaterial(
+      new THREE.MeshStandardMaterial({
+        color: 0x0a1210,
+        roughness: 0.58,
+        metalness: 0.32,
+        polygonOffset: true,
+        polygonOffsetFactor: -3,
+        polygonOffsetUnits: -3,
+      }),
+    );
+    const base = new THREE.Mesh(baseGeometry, baseMaterial);
+    base.rotation.x = -Math.PI / 2;
+    base.position.set(PAD_X, ROOF_HEIGHT + 0.014, PAD_Z);
+    base.receiveShadow = true;
+    this.group.add(base);
+
+    const ringGeometry = new THREE.RingGeometry(PAD_RADIUS - 0.1, PAD_RADIUS + 0.04, 64);
+    this.geometries.push(ringGeometry);
+    this.padRingMaterial = this.trackMaterial(
+      new THREE.MeshBasicMaterial({
+        color: 0xffc06a,
+        transparent: true,
+        opacity: 0.8,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        toneMapped: false,
+        fog: true,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+        polygonOffsetUnits: -4,
+      }),
+    );
+    const ring = new THREE.Mesh(ringGeometry, this.padRingMaterial);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(PAD_X, ROOF_HEIGHT + 0.021, PAD_Z);
+    ring.renderOrder = 2;
+    this.group.add(ring);
+
+    const innerRingGeometry = new THREE.RingGeometry(PAD_RADIUS - 0.46, PAD_RADIUS - 0.41, 64);
+    this.geometries.push(innerRingGeometry);
+    const innerRingMaterial = this.trackMaterial(
+      new THREE.MeshBasicMaterial({
+        color: 0xffdcac,
+        transparent: true,
+        opacity: 0.34,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        toneMapped: false,
+        fog: true,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+        polygonOffsetUnits: -4,
+      }),
+    );
+    const innerRing = new THREE.Mesh(innerRingGeometry, innerRingMaterial);
+    innerRing.rotation.x = -Math.PI / 2;
+    innerRing.position.set(PAD_X, ROOF_HEIGHT + 0.022, PAD_Z);
+    innerRing.renderOrder = 2;
+    this.group.add(innerRing);
+
+    const markTexture = createLandingPadTexture();
+    this.clonedTextures.push(markTexture);
+    const markGeometry = new THREE.PlaneGeometry(PAD_RADIUS * 1.72, PAD_RADIUS * 1.72);
+    this.geometries.push(markGeometry);
+    const markMaterial = this.trackMaterial(
+      new THREE.MeshBasicMaterial({
+        map: markTexture,
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+        fog: true,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -5,
+        polygonOffsetUnits: -5,
+      }),
+    );
+    const mark = new THREE.Mesh(markGeometry, markMaterial);
+    mark.rotation.x = -Math.PI / 2;
+    mark.position.set(PAD_X, ROOF_HEIGHT + 0.026, PAD_Z);
+    mark.renderOrder = 3;
+    this.group.add(mark);
+
+    const glowTexture = createPadGlowTexture();
+    this.clonedTextures.push(glowTexture);
+    const glowGeometry = new THREE.PlaneGeometry(PAD_RADIUS * 3.3, PAD_RADIUS * 3.3);
+    this.geometries.push(glowGeometry);
+    this.padGlowMaterial = this.trackMaterial(
+      new THREE.MeshBasicMaterial({
+        map: glowTexture,
+        transparent: true,
+        opacity: 0.16,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+        fog: true,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -6,
+        polygonOffsetUnits: -6,
+      }),
+    );
+    const glow = new THREE.Mesh(glowGeometry, this.padGlowMaterial);
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.set(PAD_X, ROOF_HEIGHT + 0.03, PAD_Z);
+    glow.renderOrder = 3;
+    this.group.add(glow);
+
+    for (let index = 0; index < 4; index += 1) {
+      const angle = (index / 4) * Math.PI * 2 + Math.PI / 4;
+      this.padLightPositions.push(
+        new THREE.Vector3(
+          PAD_X + Math.cos(angle) * (PAD_RADIUS - 0.02),
+          ROOF_HEIGHT + 0.07,
+          PAD_Z + Math.sin(angle) * (PAD_RADIUS - 0.02),
+        ),
+      );
+    }
+  }
+
   private buildLantern(
     warmInterior: THREE.Material,
     darkMetal: THREE.Material,
@@ -690,6 +846,16 @@ export class Terrace {
     if (flames.instanceColor) flames.instanceColor.needsUpdate = true;
     this.group.add(flames);
 
+    for (const position of this.padLightPositions) {
+      glowSources.push({
+        position: position.clone(),
+        color: new THREE.Color(1.0, 0.73, 0.38),
+        size: 1.25,
+        phase: position.x * 0.7 + position.z,
+        flicker: 0.08,
+      });
+    }
+
     const material = this.createGlowMaterial(glowSources);
     return { material };
   }
@@ -818,13 +984,114 @@ export class Terrace {
     this.materials.push(material);
     return material;
   }
+
+  private cloneLinear(texture: THREE.Texture): THREE.Texture {
+    const clone = texture.clone();
+    clone.colorSpace = THREE.NoColorSpace;
+    clone.needsUpdate = true;
+    this.clonedTextures.push(clone);
+    return clone;
+  }
+
+  private preparePhotoRepeat(photos: PhotoTextures | null): void {
+    if (!photos) return;
+    setTextureRepeat(photos.wall, 3.6, 2.4);
+    setTextureRepeat(photos.roof, 4.1, 3.6);
+  }
 }
 
-function cloneAsLinear(texture: THREE.CanvasTexture): THREE.CanvasTexture {
-  const clone = texture.clone();
-  clone.colorSpace = THREE.NoColorSpace;
-  clone.needsUpdate = true;
-  return clone;
+function setTextureRepeat(
+  set: { map: THREE.Texture; normalMap: THREE.Texture; roughnessMap: THREE.Texture },
+  repeatX: number,
+  repeatY: number,
+): void {
+  for (const texture of [set.map, set.normalMap, set.roughnessMap]) {
+    texture.repeat.set(repeatX, repeatY);
+    texture.needsUpdate = true;
+  }
+}
+
+function createLandingPadTexture(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('2D canvas unavailable');
+
+  context.translate(size / 2, size / 2);
+  context.lineCap = 'round';
+  context.shadowColor = 'rgba(255, 184, 94, 0.9)';
+  context.shadowBlur = 22;
+
+  context.strokeStyle = 'rgba(255, 231, 196, 0.9)';
+  context.lineWidth = 9;
+  context.setLineDash([18, 15]);
+  context.beginPath();
+  context.arc(0, 0, 214, 0, Math.PI * 2);
+  context.stroke();
+  context.setLineDash([]);
+
+  context.strokeStyle = 'rgba(247, 189, 108, 0.55)';
+  context.lineWidth = 4;
+  context.beginPath();
+  context.arc(0, 0, 158, 0, Math.PI * 2);
+  context.stroke();
+
+  context.fillStyle = 'rgba(255, 242, 216, 0.98)';
+  context.fillRect(-92, -74, 34, 148);
+  context.fillRect(58, -74, 34, 148);
+  context.fillRect(-58, -17, 116, 34);
+
+  context.strokeStyle = 'rgba(255, 207, 139, 0.9)';
+  context.lineWidth = 7;
+  for (let index = 0; index < 4; index += 1) {
+    context.save();
+    context.rotate((index / 4) * Math.PI * 2);
+    context.beginPath();
+    context.moveTo(-34, -232);
+    context.lineTo(0, -254);
+    context.lineTo(34, -232);
+    context.stroke();
+    context.restore();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  return texture;
+}
+
+function createPadGlowTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('2D canvas unavailable');
+  const gradient = context.createRadialGradient(
+    size / 2,
+    size / 2,
+    4,
+    size / 2,
+    size / 2,
+    size / 2,
+  );
+  gradient.addColorStop(0, 'rgba(255, 210, 150, 0.7)');
+  gradient.addColorStop(0.36, 'rgba(255, 170, 80, 0.22)');
+  gradient.addColorStop(0.7, 'rgba(255, 130, 40, 0.05)');
+  gradient.addColorStop(1, 'rgba(255, 120, 30, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, size, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
 }
 
 function createLanternGlowTexture(): THREE.CanvasTexture {

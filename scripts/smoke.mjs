@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 
-const url = process.env.SMOKE_URL ?? 'http://127.0.0.1:5173/';
+const url = process.env.SMOKE_URL ?? 'http://127.0.0.1:5199/';
 const chromePath = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const errors = [];
 const warnings = [];
@@ -58,11 +58,21 @@ await page.keyboard.press('h');
 await page.waitForTimeout(500);
 const afterHoverToggle = await page.evaluate(() => window.__DIWALI_GAME__.getDebugState());
 
+await page.keyboard.press('m');
+await page.waitForTimeout(300);
+const afterMute = await page.evaluate(() => window.__DIWALI_GAME__.getDebugState());
+
+await page.keyboard.press('m');
+await page.waitForTimeout(300);
+const afterUnmute = await page.evaluate(() => window.__DIWALI_GAME__.getDebugState());
+
 console.log(JSON.stringify({
   initial,
   afterClimb,
   afterForward,
   afterHoverToggle,
+  afterMute,
+  afterUnmute,
   debugVisible,
   errors,
   warnings,
@@ -81,7 +91,16 @@ if (initial.webgl !== 'webgl2') errors.push('WebGL2 was not active.');
 if (climbed < 0.3) errors.push(`Drone did not climb (${climbed.toFixed(2)} m).`);
 if (moved < 0.3) errors.push(`Drone did not move forward (${moved.toFixed(2)} m).`);
 if (!debugVisible) errors.push('Debug overlay did not toggle.');
+if (afterClimb.audio !== 'on') errors.push('Synthesised audio did not start on a gesture.');
 if (afterHoverToggle.hoverAssist !== false) errors.push('Hover assist did not toggle off.');
+if (!afterMute.muted) errors.push('Mute toggle did not mute audio.');
+if (afterUnmute.muted) errors.push('Mute toggle did not restore audio.');
+if (!initial.infinite) errors.push('Infinite city flag is off.');
+if (!initial.postProcessing) errors.push('Post-processing pipeline is missing.');
+if (!initial.frontProps) errors.push('Camera-mounted front props are missing.');
+if (initial.cityBuildings < 100) errors.push(`City is too sparse (${initial.cityBuildings} buildings).`);
+if (initial.cityPeriod < 256) errors.push(`City period is too short (${initial.cityPeriod} m).`);
+if (initial.activeColliders < 1) errors.push('No streamed city colliders are active.');
 if (initial.drawCalls > 120) errors.push(`Draw calls over budget (${initial.drawCalls}).`);
 if (initial.triangles > 150_000) errors.push(`Triangle budget exceeded (${initial.triangles}).`);
 if (errors.length) {
