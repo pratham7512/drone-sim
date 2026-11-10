@@ -12,6 +12,7 @@ import { InputController } from './drone/InputController';
 import { DroneAudio } from './audio/DroneAudio';
 import { Firecrackers } from './fx/Firecrackers';
 import { HUD } from './ui/HUD';
+import { loadCityPrefabs } from './world/cityKit';
 import { loadPhotoTextures } from './world/textures';
 import { World } from './world/World';
 
@@ -26,7 +27,8 @@ export interface GameDebugState {
   position: { x: number; y: number; z: number };
   speed: number;
   groundSpeed: number;
-  hoverAssist: boolean;
+  altitudeLocked: boolean;
+  altitudeTarget: number;
   flightMode: 'angle' | 'acro';
   flightState: 'flying' | 'crashed';
   throttle: number;
@@ -44,6 +46,7 @@ export interface GameDebugState {
   frontProps: boolean;
   firecrackers: boolean;
   firecrackerParticles: number;
+  preflight: boolean;
 }
 
 const QUALITY_LABEL = 'Medium';
@@ -111,15 +114,22 @@ export class Game {
 
     const maxAnisotropy = this.engine.renderer.capabilities.getMaxAnisotropy();
     // Photo scans replace the procedural plaster/roof when present. The loader
-    // falls back to the procedural set if the assets are unavailable.
-    const photos = await loadPhotoTextures(maxAnisotropy);
+    // falls back to the procedural set if the assets are unavailable. The CC0
+    // Kenney prefabs are best-effort too: without them the procedural mohalla
+    // still boots and reads correctly.
+    const [photos, prefabs] = await Promise.all([
+      loadPhotoTextures(maxAnisotropy),
+      loadCityPrefabs(maxAnisotropy),
+    ]);
     this.world = new World(
       this.engine.scene,
       this.physics,
       maxAnisotropy,
       this.engine.pixelRatio,
       photos,
+      prefabs,
     );
+    this.world.enableImageBasedLighting(this.engine.renderer);
 
     this.hud.setMapWorld({
       buildings: this.world.radarBuildings,
@@ -158,6 +168,7 @@ export class Game {
 
     this.loop.start();
     this.hud.ready();
+    this.hud.setPreflight(true, { onPad: true, landed: false });
     this.hideLoadingScreen();
   }
 
@@ -185,7 +196,8 @@ export class Game {
       position: { x: position.x, y: position.y, z: position.z },
       speed: this.drone?.speed ?? 0,
       groundSpeed: this.drone?.groundSpeed ?? 0,
-      hoverAssist: this.drone?.hoverAssist ?? true,
+      altitudeLocked: this.drone?.altitudeLock ?? false,
+      altitudeTarget: this.drone?.altitudeTarget ?? 0,
       flightMode: this.drone?.flightMode ?? 'angle',
       flightState: this.drone?.flightState ?? 'flying',
       throttle: this.drone?.throttleLevel ?? 0,
@@ -205,6 +217,7 @@ export class Game {
       frontProps: Boolean(this.fpvRig),
       firecrackers: Boolean(this.firecrackers),
       firecrackerParticles: this.firecrackers?.activeParticles ?? 0,
+      preflight: this.hud?.preflightVisible ?? false,
     };
   }
 
@@ -289,11 +302,13 @@ export class Game {
     const translation = this.drone.body.translation();
     if (!this.hasTakenOff && translation.y > this.world.homePad.y + 0.4) {
       this.hasTakenOff = true;
+      this.hud.setPreflight(false);
     }
 
     if (this.flightStatus === 'landed' && translation.y > this.landedY + TAKEOFF_CLEARANCE) {
       this.onPad = false;
       this.setFlightStatus('live');
+      this.hud.setPreflight(false);
     }
 
     if (translation.y < -8) {
@@ -362,6 +377,7 @@ export class Game {
     if (this.hasTakenOff) {
       this.setFlightStatus('landed');
       this.hud.toast(overPad ? 'Touchdown · home pad' : 'Touchdown · rooftop');
+      this.hud.setPreflight(true, { onPad: overPad, landed: true });
     }
   }
 
@@ -376,6 +392,7 @@ export class Game {
     this.fpvCamera.addCollisionShake(clamp(impactSpeed / 7, 0.35, 1));
     this.audio.playCrash();
     this.setFlightStatus('crashed');
+    this.hud.setPreflight(false);
     this.hud.setCrashState({ active: true });
   }
 
@@ -447,6 +464,8 @@ export class Game {
       headingRadians: telemetry.headingRadians,
       worldX: telemetry.worldX,
       worldZ: telemetry.worldZ,
+      altitudeLocked: telemetry.altitudeLocked,
+      altitudeTarget: telemetry.altitudeTarget,
       flightMode: telemetry.flightMode,
       flightState: telemetry.flightState,
       throttle: telemetry.throttle,
@@ -490,13 +509,29 @@ export class Game {
     });
 
     this.input.onAction((action) => {
-      if (action === 'toggle-hover') {
-        const assist = this.drone.toggleHoverAssist();
+      if (action === 'toggle-altitude-lock') {
+        if (!this.hasTakenOff || this.flightStatus === 'landed') {
+          this.hud.toast('Take off first · altitude lock is available in flight');
+          return;
+        }
+        if (this.drone.isCrashed) return;
+        if (this.drone.flightMode !== 'angle') {
+          this.hud.toast('Altitude lock is only available in angle mode');
+          return;
+        }
+        const locked = this.drone.toggleAltitudeLock();
         this.hud.toast(
-          assist
-            ? 'Altitude hold on · release all keys to fall'
-            : 'Altitude hold off · manual throttle',
+          locked
+            ? `Altitude locked · ${Math.round(this.drone.altitudeTarget)} m`
+            : 'Altitude unlocked',
         );
+      } else if (action === 'release-altitude-lock') {
+        // Space is both the climb key and the second way to release the lock.
+        // The keydown action fires before the next fixed step, so the same
+        // press also starts climbing normally.
+        if (this.drone.unlockAltitude()) {
+          this.hud.toast('Altitude unlocked');
+        }
       } else if (action === 'toggle-mode') {
         const mode = this.drone.toggleMode();
         this.hud.toast(
@@ -531,6 +566,7 @@ export class Game {
     this.flightTimeSeconds = 0;
     this.hud.setCrashState({ active: false });
     this.setFlightStatus('live');
+    this.hud.setPreflight(true, { onPad: true, landed: false });
     this.hud.toast(
       automatic
         ? 'Airframe recovered · back on the pad'

@@ -1,14 +1,9 @@
-# Synthesised audio only
+# Audio assets
 
-This folder intentionally contains no audio files.
+The drone soundtrack, firecracker pops, distant crackle tails and festival ambience are generated live with the Web Audio API in `src/audio/DroneAudio.ts`.
 
-The drone soundtrack is generated live with the Web Audio API in `src/audio/DroneAudio.ts`:
+- `drone-crash.mp3` is the only recorded sample. It is an original recording made for this project and is used for the impact thump.
+- The old recorded firecracker sample was removed. Firecrackers are now synthesised from filtered noise transients, so timing, pitch and level vary on every pop.
+- Audio starts only after a user gesture, respects autoplay restrictions and can be muted with `M`.
 
-- three detuned oscillator voices through a low-pass filter for the motors;
-- band-limited noise for prop wash and wind;
-- a sine whine tied to motor RPM;
-- a compressor and master gain for level control.
-
-Pitch, filter cutoff, prop-wash level and wind level follow commanded lift and actual ground speed. A tiny pulse adds roughness without masking conversation. Audio starts only after a user gesture, respects autoplay restrictions and can be muted with `M`.
-
-Future firework and ambience layers must follow the same policy: original synthesis or clearly licensed recordings with a manifest and attribution. Never add scraped or copyrighted audio.
+Future ambience layers must follow the same policy: original synthesis, an original recording made for this project, or clearly licensed audio with a manifest and attribution. Never add scraped or copyrighted audio.

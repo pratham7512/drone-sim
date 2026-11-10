@@ -40,10 +40,10 @@ interface Particle {
   trail: boolean;
 }
 
-const MAX_PARTICLES = 2600;
-const MAX_SHELLS = 6;
-const SPAWN_MIN_SECONDS = 0.62;
-const SPAWN_MAX_SECONDS = 1.45;
+const MAX_PARTICLES = 1500;
+const MAX_SHELLS = 3;
+const SPAWN_MIN_SECONDS = 3.4;
+const SPAWN_MAX_SECONDS = 7.2;
 
 /**
  * Warm Diwali palette. Deliberately no green: green window/bulb tints were
@@ -85,7 +85,7 @@ export class Firecrackers {
   private readonly burstDirection = new THREE.Vector3();
   private cursor = 0;
   private shellCursor = 0;
-  private schedule = 0.35;
+  private schedule = 2.6;
 
   constructor(scene: THREE.Scene) {
     this.group.name = 'diwali-firecrackers';
@@ -319,7 +319,7 @@ export class Firecrackers {
     const primary = shell.color;
     const secondary = PALETTE[this.random.int(0, PALETTE.length)]!;
     const scale = this.random.range(0.95, 1.3);
-    const count = Math.round(128 * scale);
+    const count = Math.round(84 * scale);
 
     // A bright core and a long, soft glow make the burst readable from any
     // angle and from far away, not just as a handful of single-pixel sparks.
@@ -370,7 +370,7 @@ export class Firecrackers {
       particle.gravity = this.random.range(3.4, 5.2);
       particle.drag = this.random.range(0.5, 0.78);
       particle.size = this.random.range(0.18, 0.38) * scale;
-      particle.trail = index % 3 === 0;
+      particle.trail = index % 4 === 0;
 
       const color = index % 5 === 0 ? secondary : primary;
       particle.color.copy(color).multiplyScalar(this.random.range(0.9, 1.6));
@@ -379,7 +379,7 @@ export class Firecrackers {
     }
 
     // Slow, dim embers give the burst volume without another draw call.
-    for (let index = 0; index < 26; index += 1) {
+    for (let index = 0; index < 18; index += 1) {
       const particle = this.nextParticle();
       const theta = this.random.range(0, Math.PI * 2);
       particle.position.copy(center);

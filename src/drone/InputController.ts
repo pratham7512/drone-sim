@@ -14,7 +14,8 @@ export interface FlightCommand {
 }
 
 export type InputAction =
-  | 'toggle-hover'
+  | 'toggle-altitude-lock'
+  | 'release-altitude-lock'
   | 'toggle-mode'
   | 'toggle-debug'
   | 'toggle-mute'
@@ -105,7 +106,11 @@ export class InputController {
       for (const listener of this.interactionListeners) listener();
 
       let action: InputAction | null = null;
-      if (event.code === 'KeyH') action = 'toggle-hover';
+      // H locks the current altitude. Pressing it again, or tapping Space,
+      // releases the lock. There is deliberately no manual-altitude mode: the
+      // quad always has attitude/altitude assistance available.
+      if (event.code === 'KeyH') action = 'toggle-altitude-lock';
+      else if (event.code === 'Space') action = 'release-altitude-lock';
       else if (event.code === 'KeyT') action = 'toggle-mode';
       else if (event.code === 'Backquote') action = 'toggle-debug';
       else if (event.code === 'KeyM') action = 'toggle-mute';

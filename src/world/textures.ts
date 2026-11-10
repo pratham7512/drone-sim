@@ -168,7 +168,7 @@ function createWallTexture(anisotropy: number): THREE.CanvasTexture {
   const random = new Random(0x0d1a1e);
   const { canvas, context } = createCanvas(512);
 
-  context.fillStyle = '#80715f';
+  context.fillStyle = '#aea28e';
   context.fillRect(0, 0, 512, 512);
 
   // Broad lime-wash mottling.
@@ -240,7 +240,7 @@ function createRoofTexture(anisotropy: number): THREE.CanvasTexture {
   const random = new Random(0x51ee77);
   const { canvas, context } = createCanvas(512);
 
-  context.fillStyle = '#77736d';
+  context.fillStyle = '#8a8680';
   context.fillRect(0, 0, 512, 512);
 
   for (let i = 0; i < 42; i += 1) {

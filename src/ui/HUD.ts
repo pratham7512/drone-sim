@@ -8,6 +8,9 @@ export interface FlightTelemetry {
   /** World-space position, used by the landing map. */
   worldX: number;
   worldZ: number;
+  /** True while H has pinned the current altitude. */
+  altitudeLocked: boolean;
+  altitudeTarget: number;
   flightMode: 'angle' | 'acro';
   flightState: 'flying' | 'crashed';
   throttle: number;
@@ -70,11 +73,16 @@ export class HUD {
   private readonly currentEl: HTMLElement;
   private readonly speedEl: HTMLElement;
   private readonly altitudeEl: HTMLElement;
+  private readonly altitudeLockEl: HTMLElement;
   private readonly warningEl: HTMLElement;
   private readonly debugEl: HTMLElement;
   private readonly debugValues: Record<string, HTMLElement> = {};
   private readonly toastEl: HTMLElement;
   private readonly signalEl: HTMLElement;
+  private readonly preflightEl: HTMLElement;
+  private readonly preflightKickerEl: HTMLElement;
+  private readonly preflightStatusEl: HTMLElement;
+  private readonly preflightTitleEl: HTMLElement;
   private readonly headingCanvas: HTMLCanvasElement;
   private readonly headingContext: CanvasRenderingContext2D;
   private readonly mapCanvas: HTMLCanvasElement;
@@ -122,11 +130,49 @@ export class HUD {
       <div class="osd-speed">
         <span data-speed>0</span><span class="osd-unit">km/h</span>
       </div>
-      <div class="osd-altitude"><span data-altitude>10</span><span class="osd-unit">m</span></div>
+      <div class="osd-altitude">
+        <span data-altitude>10</span><span class="osd-unit">m</span>
+        <span class="osd-alt-lock" data-alt-lock aria-hidden="true">ALT LOCK</span>
+      </div>
 
       <div class="osd-warning" data-warning hidden>FREEFALL</div>
 
       <div class="toast" role="status" aria-live="polite"></div>
+
+      <section class="preflight" aria-label="Flight controls">
+        <div class="preflight-head">
+          <span class="preflight-kicker" data-preflight-kicker>PRE-FLIGHT · TERRACE PAD</span>
+          <span class="preflight-status"><span class="preflight-dot" aria-hidden="true"></span><span data-preflight-status>READY FOR TAKEOFF</span></span>
+        </div>
+        <p class="preflight-title">Hold <kbd>SPACE</kbd> to lift off</p>
+        <div class="preflight-grid">
+          <div class="preflight-item">
+            <span class="preflight-keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span>
+            <span class="preflight-label">Drift</span>
+          </div>
+          <div class="preflight-item">
+            <span class="preflight-keys"><kbd>Q</kbd><kbd>E</kbd></span>
+            <span class="preflight-label">Yaw</span>
+          </div>
+          <div class="preflight-item">
+            <span class="preflight-keys"><kbd>SPACE</kbd><kbd>SHIFT</kbd></span>
+            <span class="preflight-label">Climb / sink</span>
+          </div>
+          <div class="preflight-item">
+            <span class="preflight-keys"><kbd>H</kbd></span>
+            <span class="preflight-label">Lock altitude</span>
+          </div>
+          <div class="preflight-item">
+            <span class="preflight-keys"><kbd>T</kbd></span>
+            <span class="preflight-label">Acro mode</span>
+          </div>
+          <div class="preflight-item">
+            <span class="preflight-keys"><kbd>R</kbd><kbd>M</kbd></span>
+            <span class="preflight-label">Reset / mute</span>
+          </div>
+        </div>
+        <p class="preflight-note"><kbd>H</kbd> pins the current altitude in angle mode. Press <kbd>H</kbd> or <kbd>SPACE</kbd> to release it. The city is alive after dark.</p>
+      </section>
 
       <div class="debug" hidden aria-label="Performance diagnostics">
         <div class="debug-title">RENDER TELEMETRY</div>
@@ -163,10 +209,15 @@ export class HUD {
     this.currentEl = this.query('[data-current]');
     this.speedEl = this.query('[data-speed]');
     this.altitudeEl = this.query('[data-altitude]');
+    this.altitudeLockEl = this.query('[data-alt-lock]');
     this.warningEl = this.query('[data-warning]');
     this.debugEl = this.query('.debug');
     this.toastEl = this.query('.toast');
     this.signalEl = this.query('.signal-loss');
+    this.preflightEl = this.query('.preflight');
+    this.preflightKickerEl = this.query('[data-preflight-kicker]');
+    this.preflightStatusEl = this.query('[data-preflight-status]');
+    this.preflightTitleEl = this.query('.preflight-title');
     this.headingCanvas = this.query<HTMLCanvasElement>('.heading-tape');
     this.mapCanvas = this.query<HTMLCanvasElement>('.minimap');
 
@@ -193,6 +244,35 @@ export class HUD {
     this.root.classList.add('is-ready');
   }
 
+  /**
+   * The pre-flight card is only shown while the quad is sitting on a surface.
+   * It disappears the moment the drone climbs and returns after a touchdown or
+   * a reset, so the controls are always available without covering the city
+   * during flight.
+   */
+  setPreflight(visible: boolean, options: { onPad?: boolean; landed?: boolean } = {}): void {
+    const onPad = options.onPad ?? true;
+    const landed = options.landed ?? false;
+    this.preflightEl.classList.toggle('is-visible', visible);
+    this.preflightEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+
+    if (landed) {
+      this.preflightKickerEl.textContent = onPad
+        ? 'TOUCHDOWN · HOME PAD'
+        : 'TOUCHDOWN · ROOFTOP';
+      this.preflightStatusEl.textContent = 'LANDED';
+      this.preflightTitleEl.innerHTML = 'Hold <kbd>SPACE</kbd> to lift off again';
+    } else {
+      this.preflightKickerEl.textContent = 'PRE-FLIGHT · TERRACE PAD';
+      this.preflightStatusEl.textContent = 'READY FOR TAKEOFF';
+      this.preflightTitleEl.innerHTML = 'Hold <kbd>SPACE</kbd> to lift off';
+    }
+  }
+
+  get preflightVisible(): boolean {
+    return this.preflightEl.classList.contains('is-visible');
+  }
+
   /** Buildings and the home pad used by the rotating landing map. */
   setMapWorld(world: MapWorld): void {
     this.mapWorld = world;
@@ -213,6 +293,11 @@ export class HUD {
 
     this.speedEl.textContent = String(Math.round(telemetry.speedMetersPerSecond * 3.6));
     this.altitudeEl.textContent = Math.round(telemetry.altitudeMeters).toString();
+    this.altitudeLockEl.classList.toggle('is-visible', telemetry.altitudeLocked);
+    this.altitudeLockEl.setAttribute('aria-hidden', telemetry.altitudeLocked ? 'false' : 'true');
+    if (telemetry.altitudeLocked) {
+      this.altitudeLockEl.textContent = `ALT LOCK · ${Math.round(telemetry.altitudeTarget)} M`;
+    }
 
     this.flightTimeEl.textContent = formatClock(telemetry.flightTimeSeconds);
     const voltage = BATTERY_EMPTY_VOLTS

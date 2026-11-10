@@ -5,6 +5,7 @@ import {
   EffectComposer,
   EffectPass,
   RenderPass,
+  SMAAEffect,
   ToneMappingEffect,
   ToneMappingMode,
 } from 'postprocessing';
@@ -109,8 +110,21 @@ class FpvGlassEffect extends Effect {
             clamp(lensUv - fringeOffset, vec2(0.001), vec2(0.999))
           ).b;
 
+          // A light unsharp mask keeps roof lines and window frames crisp after
+          // bloom, the way an in-camera FPV feed still resolves hard edges.
+          vec3 localBlur = (
+            texture2D(inputBuffer, clamp(lensUv + vec2(texelSize.x, 0.0), vec2(0.001), vec2(0.999))).rgb +
+            texture2D(inputBuffer, clamp(lensUv - vec2(texelSize.x, 0.0), vec2(0.001), vec2(0.999))).rgb +
+            texture2D(inputBuffer, clamp(lensUv + vec2(0.0, texelSize.y), vec2(0.001), vec2(0.999))).rgb +
+            texture2D(inputBuffer, clamp(lensUv - vec2(0.0, texelSize.y), vec2(0.001), vec2(0.999))).rgb
+          ) * 0.25;
+          color += (color - localBlur) * 0.16;
+
+          // The camera exposes for the moonlit sky, not the street lamps.
+          color *= 1.45;
+
           float vignette = smoothstep(0.44, 1.25, radius);
-          color *= 1.0 - vignette * (0.28 + uCrash * 0.12);
+          color *= 1.0 - vignette * (0.22 + uCrash * 0.12);
 
           float grain = hash12(safeUv * resolution + vec2(time * 53.0, -time * 41.0)) - 0.5;
           color += grain * (0.012 + uCrash * 0.02);
@@ -191,7 +205,10 @@ export class FpvPost {
     const toneMapping = new ToneMappingEffect({
       mode: ToneMappingMode.ACES_FILMIC,
     });
-    this.composer.addPass(new EffectPass(camera, this.glass, toneMapping));
+    // SMAA runs on the final LDR image, cleaning up roof edges, cables and
+    // window frames the way a good temporal upscaler would.
+    const smaa = new SMAAEffect();
+    this.composer.addPass(new EffectPass(camera, this.glass, toneMapping, smaa));
   }
 
   setSize(width: number, height: number): void {

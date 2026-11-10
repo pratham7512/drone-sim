@@ -34,12 +34,13 @@ npm run preview      # http://localhost:4173
 | `A` / `D` | Strafe left / right |
 | `Q` / `E` | Yaw left / right |
 | `Space` / `Shift` | Climb / sink (hold `Ctrl` to sink as well) |
-| `H` | Toggle hover assist |
+| `H` | Lock the current altitude (press `H` or `Space` again to unlock) |
+| `T` | Toggle acro mode |
 | `M` | Mute / unmute the synthesised audio |
 | `R` | Reset to the terrace |
 | `` ` `` | Toggle render diagnostics |
 
-The HUD shows heading, altitude, ground speed and hover-assist state. The greeting card dismisses on the first flight input or after ten seconds. Audio starts after the first click or key press because browsers require a user gesture.
+The HUD shows heading, altitude, ground speed and a persistent `ALT LOCK` badge while altitude hold is engaged. Pressing `H` pins the exact height; the quad holds it while you steer, and pressing `H` or tapping `Space` releases it. The pre-flight card dismisses on takeoff and returns on touchdown. Audio starts after the first click or key press because browsers require a user gesture.
 
 ## What is in this build
 
@@ -96,12 +97,13 @@ src/
 
 - No Google Street View, map tiles, scraped imagery or third-party copyrighted audio.
 - The two surface scans are CC0 from [Poly Haven](https://polyhaven.com/): `painted_plaster_wall` by Amal Kumar and `concrete_floor_worn_02` by Dimitrios Savva. Attribution and source links are recorded in [`public/textures/photos/README.md`](public/textures/photos/README.md).
-- All sound is generated at runtime with the Web Audio API. There are no audio files.
+- The drone bed, wind, firecracker pops and crackle tails are synthesised at runtime with the Web Audio API. `public/audio/drone-crash.mp3` is the only sample, an original recording made for this project.
+- Kenney's [City Kit (Commercial)](https://kenney.nl/assets/city-kit-commercial) buildings are CC0. Six authored GLBs are used as arterial landmarks, while the rest of the mohalla is procedural. The licence is included at [`public/models/kenney-city/LICENSE.txt`](public/models/kenney-city/LICENSE.txt).
 - Procedural wall, roof, wood, glow and rangoli textures remain available as fallbacks.
 
 ## Testing
 
-The smoke test boots the app, verifies WebGL 2, climbs, flies forward, toggles diagnostics and hover assist, mutes and unmutes audio, takes screenshots and fails on console errors, warnings, failed requests or budget overruns.
+The smoke test boots the app, verifies WebGL 2, climbs, flies forward, toggles diagnostics, checks that `H` locks the current altitude and that `H` or `Space` releases it, confirms the pre-flight card hides in flight, mutes and unmutes audio, takes screenshots and fails on console errors, warnings, failed requests or budget overruns.
 
 ```bash
 # with the dev server running on a known port

@@ -11,18 +11,16 @@ interface MotorVoice {
 const AUDIO_ROOT = `${import.meta.env.BASE_URL}audio/`;
 
 /**
- * FPV soundscape. The motor bed is synthesised, while firecracker bursts and
- * the airframe crash use original CC0 recordings loaded from `public/audio`.
- * Recordings give the one-shot effects the body and room tone that oscillators
- * cannot fake; launch whistles, crackle tails and the dead-feed static are
- * layered on top. The graph starts only after a real user gesture so browsers
- * allow playback.
+ * FPV soundscape. The motor bed, firecracker pops and distant crackle tails are
+ * synthesised. The only recording is the airframe crash one-shot, loaded from
+ * `public/audio`; every other sound is generated from oscillators and shaped
+ * noise so the mix stays original and licence-clean. The graph starts only
+ * after a real user gesture so browsers allow playback.
  */
 export class DroneAudio {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
-  private firecrackerSample: AudioBuffer | null = null;
   private crashSample: AudioBuffer | null = null;
   private samplesPromise: Promise<void> | null = null;
   private motorGain: GainNode | null = null;
@@ -181,8 +179,8 @@ export class DroneAudio {
   }
 
   /**
-   * Original CC0 one-shots. Kept best-effort: if the network or decoder is
-   * unavailable, the synthesised layers still carry the effect.
+   * The crash one-shot is the only recording. Kept best-effort: if the network
+   * or decoder is unavailable, the synthesised layers still carry the effect.
    */
   private loadSamples(context: AudioContext): Promise<void> {
     if (this.samplesPromise) return this.samplesPromise;
@@ -199,12 +197,7 @@ export class DroneAudio {
         }
       };
 
-      const [firecracker, crash] = await Promise.all([
-        load('firecracker.mp3'),
-        load('drone-crash.mp3'),
-      ]);
-      this.firecrackerSample = firecracker;
-      this.crashSample = crash;
+      this.crashSample = await load('drone-crash.mp3');
     })();
 
     return this.samplesPromise;
@@ -318,11 +311,11 @@ export class DroneAudio {
   }
 
   /**
-   * One-shot Diwali firecracker. Every shell launch and every burst in the
-   * sky uses this one reusable recipe. Bursts play the same CC0 field
-   * recording with a small pitch/level variation, plus a synthetic crack and
-   * body for punch. `pan` is the horizontal offset relative to the pilot and
-   * the sound is delayed by the real speed of sound.
+   * One-shot Diwali firecracker. The old recording was replaced by a fully
+   * synthesised "phataka": a supersonic paper crack, a short chest thump, a
+   * scatter of burning-paper snaps and two delayed street echoes. `pan` is the
+   * horizontal offset relative to the pilot and the sound is delayed by the
+   * real speed of sound.
    */
   playFirecracker(
     distance: number,
@@ -337,30 +330,33 @@ export class DroneAudio {
     // Real sound takes about 3 ms per metre. At rooftop distance this reads
     // as the natural lag between the flash and the report.
     const arrival = context.currentTime + 0.012 + Math.min(0.32, range / 343);
+    // City crackers are sharp, not cinematic explosions. Keep them present but
+    // noticeably quieter than the old sample-based burst.
     const level = kind === 'launch'
-      ? clamp(0.5 / (1 + range * 0.026), 0.045, 0.5)
-      : clamp(1.35 / (1 + range * 0.016), 0.18, 1.35);
+      ? clamp(0.32 / (1 + range * 0.03), 0.025, 0.32)
+      : clamp(0.92 / (1 + range * 0.024), 0.1, 0.92);
 
     const panner = context.createStereoPanner();
     panner.pan.value = clamp(pan, -1, 1);
 
-    // Per-shot limiter: the burst can be genuinely loud without clipping the
-    // drone bed or the destination. Routing straight to the master (rather
-    // than the always-on compressor) keeps the transient punchy.
+    // Per-shot limiter: the crack can be genuinely loud without clipping the
+    // drone bed or the destination.
     const limiter = context.createDynamicsCompressor();
-    limiter.threshold.value = -3;
+    limiter.threshold.value = -4;
     limiter.knee.value = 2;
     limiter.ratio.value = 20;
     limiter.attack.value = 0.001;
-    limiter.release.value = 0.18;
+    limiter.release.value = 0.16;
 
     const bus = context.createGain();
     bus.gain.value = level;
 
+    // Air absorption: distant crackers lose their high snap and become a dull
+    // thump with a long tail.
     const air = context.createBiquadFilter();
     air.type = 'lowpass';
-    air.frequency.value = clamp(17000 - range * 110, 2600, 17000);
-    air.Q.value = 0.35;
+    air.frequency.value = clamp(19000 - range * 135, 2200, 19000);
+    air.Q.value = 0.28;
 
     bus.connect(air);
     air.connect(limiter);
@@ -368,58 +364,43 @@ export class DroneAudio {
     panner.connect(this.master);
 
     if (kind === 'launch') {
-      const pitch = 0.86 + Math.random() * 0.3;
-      this.toneSweep(arrival, 300 * pitch, 1450 * pitch, 0.62, 0.3, bus, 'sine');
-      this.noiseBurst(arrival, 0.55, 'bandpass', 2600, 0.8, 0.05, bus);
-    } else if (this.firecrackerSample) {
-      const detune = 0.88 + Math.random() * 0.22;
-      this.playSample(
-        this.firecrackerSample,
-        arrival,
-        1.9,
-        detune,
-        bus,
-        clamp(14000 - range * 90, 3000, 14000),
-      );
-
-      // The recording supplies the body; these layers restore the supersonic
-      // snap and the low thump that a phone speaker can still reproduce.
-      this.noiseBurst(arrival, 0.025, 'highpass', 4200, 0.8, 0.7, bus);
-      this.noiseBurst(arrival + 0.002, 0.4, 'lowpass', 220 * detune, 0.9, 0.5, bus);
-      this.toneSweep(arrival, 112 * detune, 28, 0.55, 0.5, bus, 'sine');
-
-      // Burning paper and the crackle tail, kept under the recording.
-      for (let index = 0; index < 16; index += 1) {
-        const start = arrival + 0.1 + Math.random() * 1.1;
-        this.noiseBurst(
-          start,
-          0.018 + Math.random() * 0.05,
-          'bandpass',
-          1600 + Math.random() * 5200,
-          1.5,
-          0.05 + Math.random() * 0.14,
-          bus,
-        );
-      }
+      // A rocket is a paper hiss with a short rising whistle, not a boom.
+      const pitch = 0.88 + Math.random() * 0.24;
+      this.noiseBurst(arrival, 0.7, 'bandpass', 2300 * pitch, 0.7, 0.3, bus);
+      this.toneSweep(arrival, 340 * pitch, 1180 * pitch, 0.52, 0.08, bus, 'sine');
+      this.noiseBurst(arrival + 0.5, 0.16, 'highpass', 4200, 0.6, 0.05, bus);
     } else {
-      // Fallback until the sample has decoded.
-      const detune = 0.86 + Math.random() * 0.3;
-      this.noiseBurst(arrival, 0.03, 'highpass', 3600, 0.8, 0.95, bus);
-      this.noiseBurst(arrival + 0.002, 0.52, 'lowpass', 250 * detune, 0.9, 1.05, bus);
-      this.noiseBurst(arrival + 0.006, 0.16, 'bandpass', 820 * detune, 0.7, 0.55, bus);
-      this.toneSweep(arrival, 118 * detune, 26, 0.7, 1.0, bus, 'sine');
-      for (let index = 0; index < 22; index += 1) {
-        const start = arrival + 0.08 + Math.random() * 1.25;
+      const detune = 0.9 + Math.random() * 0.2;
+
+      // The crack: a very short, bright paper snap. Two bands stop it reading
+      // as a generic gunshot.
+      this.noiseBurst(arrival, 0.014, 'highpass', 7600, 0.75, 0.8, bus);
+      this.noiseBurst(arrival + 0.001, 0.028, 'bandpass', 3900 * detune, 1.1, 0.68, bus);
+
+      // The body: compressed air and a low thump that survives phone speakers.
+      this.noiseBurst(arrival + 0.002, 0.24, 'lowpass', 340 * detune, 0.8, 0.44, bus);
+      this.toneSweep(arrival, 128 * detune, 34, 0.34, 0.4, bus, 'sine');
+
+      // Paper tearing and the burning fuse tail. Short, dry, irregular.
+      const snaps = 9 + Math.floor(Math.random() * 4);
+      for (let index = 0; index < snaps; index += 1) {
+        const start = arrival + 0.06 + Math.random() * 0.72;
         this.noiseBurst(
           start,
-          0.018 + Math.random() * 0.05,
-          'bandpass',
-          1600 + Math.random() * 5200,
-          1.5,
-          0.08 + Math.random() * 0.2,
+          0.012 + Math.random() * 0.028,
+          index % 3 === 0 ? 'highpass' : 'bandpass',
+          1800 + Math.random() * 5200,
+          1.4,
+          0.025 + Math.random() * 0.07,
           bus,
         );
       }
+
+      // Two slaps back from the surrounding walls. This is what makes a
+      // mohalla cracker feel like it happened between buildings.
+      this.noiseBurst(arrival + 0.17, 0.09, 'lowpass', 1150, 0.5, 0.12, bus);
+      this.noiseBurst(arrival + 0.34, 0.14, 'lowpass', 760, 0.45, 0.075, bus);
+      this.toneSweep(arrival + 0.18, 72, 30, 0.3, 0.08, bus, 'sine');
     }
 
     // Let the one-shot graph disappear once its tail has decayed.
@@ -428,7 +409,7 @@ export class DroneAudio {
       air.disconnect();
       limiter.disconnect();
       panner.disconnect();
-    }, 3400);
+    }, 2400);
   }
 
   /** Hard impact plus a dead analogue video feed. */

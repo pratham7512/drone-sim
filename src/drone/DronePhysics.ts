@@ -19,8 +19,10 @@ export interface DroneTelemetry {
   /** World-space position, used by the landing map. */
   worldX: number;
   worldZ: number;
-  /** Altitude hold is only active in angle mode. */
-  hoverAssist: boolean;
+  /** True while the pilot has pinned the current altitude with H. */
+  altitudeLocked: boolean;
+  /** The pinned altitude in metres; only meaningful while locked. */
+  altitudeTarget: number;
   flightMode: FlightMode;
   flightState: FlightState;
   throttle: number;
@@ -98,7 +100,8 @@ export class DronePhysics {
   private mode: FlightMode = 'angle';
   private state: FlightState = 'flying';
   private throttle = 0;
-  private altitudeAssist = true;
+  private altitudeLocked = false;
+  private lockedAltitude = 0;
   private batteryPercent = STARTING_BATTERY;
   private homeDistance = 0;
 
@@ -150,9 +153,12 @@ export class DronePhysics {
     return this.state === 'crashed';
   }
 
-  /** Compatibility alias used by the HUD. */
-  get hoverAssist(): boolean {
-    return this.altitudeAssist;
+  get altitudeLock(): boolean {
+    return this.altitudeLocked;
+  }
+
+  get altitudeTarget(): number {
+    return this.altitudeLocked ? this.lockedAltitude : this.body.translation().y;
   }
 
   get throttleLevel(): number {
@@ -260,12 +266,33 @@ export class DronePhysics {
   toggleMode(): FlightMode {
     if (this.state === 'crashed') return this.mode;
     this.mode = this.mode === 'angle' ? 'acro' : 'angle';
+    // Altitude hold is an angle-mode convenience. Entering acro always hands
+    // vertical control back to the pilot.
+    if (this.mode === 'acro') this.altitudeLocked = false;
     return this.mode;
   }
 
-  toggleHoverAssist(): boolean {
-    this.altitudeAssist = !this.altitudeAssist;
-    return this.altitudeAssist;
+  /**
+   * Pins the current altitude. A second call (or a Space keypress) releases it.
+   * Returns true while the lock is engaged.
+   */
+  toggleAltitudeLock(): boolean {
+    if (this.state === 'crashed') return false;
+    if (this.altitudeLocked) {
+      this.altitudeLocked = false;
+      return false;
+    }
+    const translation = this.body.translation();
+    this.lockedAltitude = clamp(translation.y, 0.2, MAX_ALTITUDE - 4);
+    this.altitudeLocked = true;
+    return true;
+  }
+
+  /** Releases the altitude lock without changing the current throttle. */
+  unlockAltitude(): boolean {
+    const wasLocked = this.altitudeLocked;
+    this.altitudeLocked = false;
+    return wasLocked;
   }
 
   /** No quadcopter gets to keep flying after an abrupt stop. */
@@ -273,6 +300,7 @@ export class DronePhysics {
     if (this.state === 'crashed') return;
     this.state = 'crashed';
     this.throttle = 0;
+    this.altitudeLocked = false;
     this.body.setAngvel(
       {
         x: (Math.random() - 0.5) * 9,
@@ -289,6 +317,7 @@ export class DronePhysics {
    */
   settleOnLanding(): void {
     this.throttle = 0;
+    this.altitudeLocked = false;
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.previousVelocity.set(0, 0, 0);
@@ -299,7 +328,8 @@ export class DronePhysics {
     this.state = 'flying';
     this.mode = 'angle';
     this.throttle = 0;
-    this.altitudeAssist = true;
+    this.altitudeLocked = false;
+    this.lockedAltitude = this.startPosition.y;
     this.batteryPercent = STARTING_BATTERY;
     this.homeDistance = 0;
     this.previousVelocity.set(0, 0, 0);
@@ -334,7 +364,8 @@ export class DronePhysics {
       headingRadians: this.headingRadians,
       worldX: translation.x,
       worldZ: translation.z,
-      hoverAssist: this.altitudeAssist,
+      altitudeLocked: this.altitudeLocked,
+      altitudeTarget: this.altitudeLocked ? this.lockedAltitude : translation.y,
       flightMode: this.mode,
       flightState: this.state,
       throttle: this.throttle,
@@ -351,6 +382,27 @@ export class DronePhysics {
   }
 
   private updateThrottle(deltaSeconds: number, command: FlightCommand): void {
+    // H pins the altitude the pilot is currently at. A small velocity-target
+    // loop trims the throttle around hover: it asks for a gentle climb or sink
+    // proportional to the remaining altitude error, then damps the vertical
+    // speed. There is no hidden teleport force, so turbulence, tilt and drag
+    // still affect the airframe.
+    if (this.altitudeLocked && this.mode === 'angle') {
+      const translation = this.body.translation();
+      const verticalSpeed = this.body.linvel().y;
+      const altitudeError = this.lockedAltitude - translation.y;
+      const targetVerticalSpeed = clamp(altitudeError * 0.9, -2.6, 2.6);
+      const verticalAlignment = Math.max(0.32, this.up.y);
+      const hoverThrottle = clamp(HOVER_THROTTLE / verticalAlignment, 0, 1);
+      const targetThrottle = clamp(
+        hoverThrottle + (targetVerticalSpeed - verticalSpeed) * 0.06,
+        0,
+        0.55,
+      );
+      this.throttle += (targetThrottle - this.throttle) * dampFactor(7, deltaSeconds);
+      return;
+    }
+
     // Shift (or Ctrl) is a powered descent, not a throttle cut: the motors
     // trim around a ~2.1 m/s sink rate, which is well below free fall and
     // gentle enough to land on a terrace. Space+Shift is the same command, so
@@ -360,7 +412,7 @@ export class DronePhysics {
       const hoverThrottle = clamp(HOVER_THROTTLE / verticalAlignment, 0, 1);
       const verticalSpeed = this.body.linvel().y;
       const trim = clamp(
-        (CONTROLLED_DESCENT_RATE - verticalSpeed) * 0.075,
+        (-CONTROLLED_DESCENT_RATE - verticalSpeed) * 0.075,
         -0.26,
         0.3,
       );
@@ -378,13 +430,12 @@ export class DronePhysics {
       1,
     );
 
-    // Keyboard throttle is a demand stick, not a friction-held lever. The
-    // altitude hold keeps the height reached with Space locked in while the
-    // pilot is actively steering. Let go of every key and the motors spool
-    // down, gravity takes over, and the drone falls until the pilot punches
-    // the throttle or starts steering again.
+    // Keyboard throttle is a demand stick, not a friction-held lever. With a
+    // direction held, angle mode trims the throttle toward a stable hover; the
+    // pilot does not have to feather Space. Release every key and the motors
+    // spool down, exactly as before. H is the explicit "hold this height" tool.
     if (Math.abs(command.lift) < 0.001) {
-      if (this.mode === 'angle' && this.altitudeAssist && command.active) {
+      if (this.mode === 'angle' && command.active) {
         // Angle mode's altitude hold only trims the throttle. It never adds a
         // hidden force: gravity, thrust and drag remain the only vertical terms.
         const verticalAlignment = Math.max(0.32, this.up.y);

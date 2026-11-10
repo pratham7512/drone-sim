@@ -1,0 +1,21 @@
+Kenney City Kit — Commercial / Buildings
+=========================================
+
+Source: https://kenney.nl/assets/city-kit-commercial
+Mirror: https://github.com/shorepine/kenney/tree/main/3d/city-commercial
+Author: Kenney (https://www.kenney.nl)
+
+License: Creative Commons Zero (CC0 1.0 Universal)
+https://creativecommons.org/publicdomain/zero/1.0/
+
+You may use these models for personal, educational and commercial projects.
+Attribution is not required; this notice is kept as good practice.
+
+Files used by the game:
+  building-a.glb, building-e.glb, building-f.glb, building-k.glb,
+  building-skyscraper-a.glb, low-detail-building-wide-b.glb,
+  Textures/colormap.png
+
+The models are loaded as landmark buildings along the arterial roads. The rest
+of the mohalla is generated procedurally so the city still reads as an Indian
+neighbourhood rather than a Western commercial kit.
